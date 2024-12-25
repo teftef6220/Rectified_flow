@@ -1,0 +1,7 @@
+result_Cifar10/
+result_MNIST/
+data/
+venv/
+__pycache__/
+*.pyc
+*.pth
