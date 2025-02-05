@@ -5,3 +5,14 @@ venv/
 __pycache__/
 *.pyc
 *.pth
+vqvae_generated_images/
+dit_generated_images/
+Dit_result/
+*.png
+*.onnx
+*.svm
+*.xml
+*.txt
+*.pkl
+
+network/
