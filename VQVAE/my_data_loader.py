@@ -12,10 +12,10 @@ class MyDataLoader(Dataset):
         self.data_paths = []  
         self.labels = []      
 
-
         folders = sorted(os.listdir(data_dir))  
         self.folder_to_label = {folder: idx for idx, folder in enumerate(folders)} 
 
+        # Labeling use folder name
         for folder in folders:
             folder_path = os.path.join(data_dir, folder)
             if os.path.isdir(folder_path):  

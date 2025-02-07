@@ -10,11 +10,12 @@ from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
 from argparse import ArgumentParser
+from VQVAE.my_data_loader import MyDataLoader
 
 # parser
 parser = ArgumentParser()
-parser.add_argument("--optimizer", type=str, default="RAdamScheduleFree", help="optimizer")
-parser.add_argument("--dataset", type=str, default="Cifar10", help="dataset")
+parser.add_argument("--optimizer", type=str, default="adamW", help="optimizer")
+parser.add_argument("--dataset", type=str, default="My_data", help="dataset")
 
 args = parser.parse_args()
 
@@ -86,6 +87,10 @@ elif args.dataset == "MNIST":
     unet = Unet(in_channels=1, embedding_channels=64).to(device)
     time_embed = Time_Embed().to(device)
     cond_embed = Cond_Embed(label_num=10).to(device)
+elif args.dataset == "My_data":
+    unet = Unet(in_channels=3, embedding_channels=64).to(device)
+    time_embed = Time_Embed().to(device)
+    cond_embed = Cond_Embed(label_num=26).to(device)
 
 model = CombinedModel(unet, time_embed, cond_embed).to(device)
 
@@ -108,11 +113,22 @@ elif args.dataset == "MNIST":
     ])
     train_loader = DataLoader(datasets.MNIST(root='./data', train=True, download=True, transform=transform), batch_size=batch_size, shuffle=True)
 
+
+elif args.dataset == "My_data":
+    batch_size = 8
+    transform = transforms.Compose([
+        transforms.Resize((64, 64)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ])
+    dataset = MyDataLoader(data_dir='./make_dataset/stamps', transform=transform )
+    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
 os.makedirs(f"result_{args.dataset}", exist_ok=True)
 
 print("Training On ", device)
 # train
-epochs = 10
+epochs = 30
 criterion = torch.nn.MSELoss()
 
 if args.optimizer == "adamW":
@@ -141,7 +157,7 @@ for epoch in range(epochs):
             labels = labels.to(device)
             images = images.to(device) #(batch, 1, 28, 28)
 
-            labels = torch.nn.functional.one_hot(labels, 10).float().to(device)
+            labels = torch.nn.functional.one_hot(labels, 26).float().to(device)
             labels_embed  = cond_embed(labels)
 
             time = torch.rand(1).to(device)
@@ -182,9 +198,11 @@ for epoch in range(epochs):
             x_0 = torch.randn(10, 3, 32, 32).to(device)
         elif args.dataset == "MNIST":
             x_0 = torch.randn(10, 1, 28, 28).to(device)
-        time_embedded = time_embed(torch.linspace(0, 1, 10).unsqueeze(1).to(device))
-        cond_embedded = cond_embed(nn.functional.one_hot(torch.arange(10), 10).float().cuda())
-        for i in range(10):
+        elif args.dataset == "My_data":
+            x_0 = torch.randn(26, 3, 64, 64).to(device)
+        time_embedded = time_embed(torch.linspace(0, 1, 26).unsqueeze(1).to(device))
+        cond_embedded = cond_embed(nn.functional.one_hot(torch.arange(26), 26).float().cuda())
+        for i in range(26):
             v = unet(x_0, time_embedded[i], cond_embedded)
             x_0 = x_0 + 0.1 * v
         sample = (x_0 + 1) / 2
