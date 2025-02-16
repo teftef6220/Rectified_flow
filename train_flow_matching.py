@@ -11,90 +11,103 @@ import torch.nn as nn
 import torch.optim as optim
 from argparse import ArgumentParser
 from VQVAE.my_data_loader import MyDataLoader
+import matplotlib.pyplot as plt
+
+
+from DiT_GumbelSoftmax.network.dit import DiffusionTransformer
+from DiT_GumbelSoftmax.config import Config
 
 # parser
 parser = ArgumentParser()
-parser.add_argument("--optimizer", type=str, default="adamW", help="optimizer")
+parser.add_argument("--optimizer", type=str, default="RAdamScheduleFree", help="optimizer")
 parser.add_argument("--dataset", type=str, default="My_data", help="dataset")
+parser.add_argument("--train_use_cfg",type=bool,default=True,help="train with cfg")
+parser.add_argument("--dropout_rate",type=float,default=0.1,help="dropout rate")
+parser.add_argument("--cfg_scale",type=int,default=2.0,help="cfg scale")
+parser.add_argument("--l1_norm",type=bool,default=True,help="l1 norm")
+parser.add_argument("--use_dit",type=bool,default=False,help="use diffusion transformer")
 
 args = parser.parse_args()
 
 
-
-
-class Unet(nn.Module):
-    def __init__(self, in_channels, embedding_channels=64, time_embed_dim=256, cond_embed_dim=256, depth=3):
-        super(Unet, self).__init__()
-
-        self.unet = UNet(
-            in_channels=in_channels,
-            embedding_channels=embedding_channels,
-            cond_embed_dim=cond_embed_dim,
-            time_embed_dim=time_embed_dim,
-            depth=depth,
-            kernel_size=[3,3,3,3,3],
-            layers=[3,3,9,3,3],
-            num_groups=[32] * (depth * 2 - 1) 
-        )
-    
-    def forward(self, x, t, c):
-        return self.unet(x, t, c)
-    
-class Time_Embed(nn.Module):
-    def __init__(self, time_embed_dim=256):
-        super(Time_Embed, self).__init__()
-        self.time_embed = nn.Linear(1,time_embed_dim)
-        self.reg = nn.ReLU(inplace=False)
-    
-    def forward(self, t):
-        return self.reg(self.time_embed(t))
-
-class Cond_Embed(nn.Module):
-    def __init__(self,label_num=10, cond_embed_dim=256):
-        super(Cond_Embed, self).__init__()
-        self.cond_embed = nn.Linear(label_num,cond_embed_dim)
-        # self.normalize = nn.LayerNorm(cond_embed_dim)
-        self.reg = nn.ReLU(inplace=False)
-    
-    def forward(self, c):
-        out = self.cond_embed(c)
-        # out = self.normalize(out)
-        return self.reg(out)
-
-
-class CombinedModel(nn.Module):
-    def __init__(self, unet, time_embed, cond_embed):
-        super(CombinedModel, self).__init__()
-        self.unet = unet
-        self.time_embed = time_embed
-        self.cond_embed = cond_embed
-
-    def forward(self, x, t, c):
-        t = self.time_embed(t)
-        c = self.cond_embed(c)
-        return self.unet(x, t, c)
-
 # GPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+if args.use_dit:
+    config = Config()
+    model = DiffusionTransformer(config)
+
+else:
+    class Unet(nn.Module):
+        def __init__(self, in_channels, embedding_channels=64, time_embed_dim=256, cond_embed_dim=256, depth=4):
+            super(Unet, self).__init__()
+
+            self.unet = UNet(
+                in_channels=in_channels,
+                embedding_channels=embedding_channels,
+                cond_embed_dim=cond_embed_dim,
+                time_embed_dim=time_embed_dim,
+                depth=depth,
+                kernel_size=[3,3,3,3,3,3,3],
+                layers=[3,3,3,9,3,3,3],
+                num_groups=[32] * (depth * 2 - 1) 
+            )
+        
+        def forward(self, x, t, c):
+            return self.unet(x, t, c)
+        
+    class Time_Embed(nn.Module):
+        def __init__(self, time_embed_dim=256):
+            super(Time_Embed, self).__init__()
+            self.time_embed = nn.Linear(1,time_embed_dim)
+            self.reg = nn.ReLU(inplace=False)
+        
+        def forward(self, t):
+            return self.reg(self.time_embed(t))
+
+    class Cond_Embed(nn.Module):
+        def __init__(self,label_num=10, cond_embed_dim=256):
+            super(Cond_Embed, self).__init__()
+            self.cond_embed = nn.Linear(label_num,cond_embed_dim)
+            # self.normalize = nn.LayerNorm(cond_embed_dim)
+            self.reg = nn.ReLU(inplace=False)
+        
+        def forward(self, c):
+            out = self.cond_embed(c)
+            # out = self.normalize(out)
+            return self.reg(out)
+
+
+    class CombinedModel(nn.Module):
+        def __init__(self, unet, time_embed, cond_embed):
+            super(CombinedModel, self).__init__()
+            self.unet = unet
+            self.time_embed = time_embed
+            self.cond_embed = cond_embed
+
+        def forward(self, x, t, c):
+            t = self.time_embed(t)
+            c = self.cond_embed(c)
+            return self.unet(x, t, c)
+
 # model
-unet = Unet(in_channels=1, embedding_channels=64).to(device)
-time_embed = Time_Embed().to(device)
-if args.dataset == "Cifar10":
-    unet = Unet(in_channels=3, embedding_channels=64).to(device)
-    time_embed = Time_Embed().to(device)
-    cond_embed = Cond_Embed(label_num=10).to(device)
-elif args.dataset == "MNIST":
-    unet = Unet(in_channels=1, embedding_channels=64).to(device)
-    time_embed = Time_Embed().to(device)
-    cond_embed = Cond_Embed(label_num=10).to(device)
-elif args.dataset == "My_data":
-    unet = Unet(in_channels=3, embedding_channels=64).to(device)
-    time_embed = Time_Embed().to(device)
-    cond_embed = Cond_Embed(label_num=26).to(device)
+    if args.dataset == "Cifar10":
+        channel_num = 3
+        data_label_num = 10
+    elif args.dataset == "MNIST":
+        channel_num = 1
+        data_label_num = 10
+    elif args.dataset == "My_data":
+        channel_num = 3
+        data_label_num = 26
 
-model = CombinedModel(unet, time_embed, cond_embed).to(device)
 
-# dataloader CIFAR10
+    unet = Unet(in_channels=channel_num, embedding_channels=64).to(device)
+    time_embed = Time_Embed().to(device)
+    cond_embed = Cond_Embed(label_num=data_label_num).to(device)
+    model = CombinedModel(unet, time_embed, cond_embed).to(device)
+
+# dataloader 
 if args.dataset == "Cifar10":
     batch_size = 64
     transform = transforms.Compose([
@@ -128,7 +141,7 @@ os.makedirs(f"result_{args.dataset}", exist_ok=True)
 
 print("Training On ", device)
 # train
-epochs = 30
+epochs = 100
 criterion = torch.nn.MSELoss()
 
 if args.optimizer == "adamW":
@@ -146,6 +159,8 @@ elif args.optimizer == "LBFGS":
     
     optimizer = torch.optim.LBFGS(model.parameters(), lr=0.001)
 
+total_loss_array,epoch_vec = [],[]
+
 for epoch in range(epochs):
     model.train()
     if args.optimizer == "RAdamScheduleFree":
@@ -157,7 +172,13 @@ for epoch in range(epochs):
             labels = labels.to(device)
             images = images.to(device) #(batch, 1, 28, 28)
 
-            labels = torch.nn.functional.one_hot(labels, 26).float().to(device)
+            labels = torch.nn.functional.one_hot(labels, data_label_num).float().to(device)
+
+            ## ドロップアウト　if args.train_use_cfg
+            if args.train_use_cfg:
+                if torch.rand(1).item() < args.dropout_rate: 
+                    labels = torch.zeros_like(labels)
+
             labels_embed  = cond_embed(labels)
 
             time = torch.rand(1).to(device)
@@ -169,6 +190,16 @@ for epoch in range(epochs):
             if args.optimizer == "adamW" or args.optimizer == "RAdamScheduleFree":
                 v_pred = unet(x_t, time_embeds, labels_embed) 
                 loss = criterion(images - x_0 , v_pred)
+
+                if args.l1_norm:
+                    l1_lambda = 1e-5  # L1正則化の強度（適宜調整）
+                    l1_loss = 0.0
+                    for param in unet.parameters():
+                        l1_loss += torch.sum(torch.abs(param))
+                    
+                    loss += l1_lambda * l1_loss
+                
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -188,29 +219,57 @@ for epoch in range(epochs):
     ave_loss = total_loss / len(train_loader) * batch_size
     print(f"Epoch: {epoch+1}, Loss: {ave_loss/(i+1)}")
 
+    epoch_vec.append(epoch+1)
+    total_loss_array.append(ave_loss/(i+1))
+
+    plt.figure()
+    plt.plot(epoch_vec, total_loss_array)
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("MSE Loss Plot")
+    plt.savefig(f"result_{args.dataset}/recon_loss_plot.png")
+    plt.close() 
+
+
     # check inference
     
     with torch.no_grad():
         model.eval()
+        
         if args.optimizer == "RAdamScheduleFree":
             optimizer.eval()
+
         if args.dataset == "Cifar10":
             x_0 = torch.randn(10, 3, 32, 32).to(device)
         elif args.dataset == "MNIST":
             x_0 = torch.randn(10, 1, 28, 28).to(device)
         elif args.dataset == "My_data":
             x_0 = torch.randn(26, 3, 64, 64).to(device)
-        time_embedded = time_embed(torch.linspace(0, 1, 26).unsqueeze(1).to(device))
-        cond_embedded = cond_embed(nn.functional.one_hot(torch.arange(26), 26).float().cuda())
-        for i in range(26):
-            v = unet(x_0, time_embedded[i], cond_embedded)
+        time_embedded = time_embed(torch.linspace(0, 1, 10).unsqueeze(1).to(device))
+        cond_embedded = cond_embed(nn.functional.one_hot(torch.arange(data_label_num), data_label_num).float().cuda())
+
+        if args.train_use_cfg:
+            uncond_labels = torch.zeros((cond_embedded.size(0), data_label_num), device=device)
+            uncond_embedded = cond_embed(uncond_labels)
+
+        for i in range(10):
+            
+            v_cond = unet(x_0, time_embedded[i], cond_embedded)
+
+            if args.train_use_cfg:
+                v_uncond = unet(x_0, time_embedded[i], uncond_embedded)
+                v = args.cfg_scale * v_cond - (args.cfg_scale - 1.) * v_uncond
+            else:
+                v = v_cond
+            
             x_0 = x_0 + 0.1 * v
+            # x_0 = x_0.clamp(-1, 1)
         sample = (x_0 + 1) / 2
         sample.clamp_(0, 1)
 
         pil_images = [transforms.functional.to_pil_image(x) for x in (sample * 255).to(torch.uint8)]
         #Save image in one image
-        cols , rows = 5, 2
+        cols , rows = 5, 5
         img_width, img_height = pil_images[0].size
         grid_width = img_width * cols 
         grid_height = img_height * rows
@@ -224,7 +283,7 @@ for epoch in range(epochs):
         os.makedirs(f"result_{args.dataset}/images", exist_ok=True)
         grid_image.save(f"result_{args.dataset}/images/{epoch}_grid.png")
 
-    if epoch % 10 == 0 and epoch != 0:
+    if epoch % 20 == 0 and epoch != 0:
         os.makedirs(f"result_{args.dataset}/models", exist_ok=True)
         torch.save(model.state_dict(), f"result_{args.dataset}/models/flow_model_{epoch}_{args.dataset}.pth")
 
